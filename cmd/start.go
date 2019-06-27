@@ -21,6 +21,7 @@ import (
 	"fmt"
 	"github.com/mackerelio/go-osstat/cpu"
 	"github.com/mackerelio/go-osstat/memory"
+	"github.com/mackerelio/go-osstat/network"
 	"log"
 	"os"
 	"os/exec"
@@ -58,7 +59,7 @@ to quickly create a Cobra application.`,
 		}
 
 		//try to create table with for the host. If table already exists, continue.
-		stmt, err := db.Prepare("CREATE TABLE " + Hostname() + "(Cpu float, Mem int(11), Uptime text, Time datetime);")
+		stmt, err := db.Prepare("CREATE TABLE " + Hostname() + "(CpuUser float, CpuSystem float, CpuIdle float, MemTotal int(11), MemUsed int(11), MemCached int(11), MemFree int(11), RxBytes int(11), TxBytes int(11), Uptime text, Time datetime);")
 		if err != nil {
 			log.Fatal(err)
 		}
@@ -75,7 +76,7 @@ to quickly create a Cobra application.`,
 
 		//constantly send metrics to DB
 		for true {
-			stmt, err := db.Prepare("INSERT INTO " + Hostname() + " VALUES (" + strconv.FormatFloat(getCpu(0), 'f', 6, 64) + "," + strconv.FormatUint(getMemory(1), 10) + "," + "'" + getUptime() + "'" + "," + "CURRENT_TIMESTAMP" + ");")
+			stmt, err := db.Prepare("INSERT INTO " + Hostname() + " VALUES (" + strconv.FormatFloat(getCpu(0), 'f', 6, 64) + "," + strconv.FormatFloat(getCpu(1), 'f', 6, 64) + "," + strconv.FormatFloat(getCpu(2), 'f', 6, 64) + "," + strconv.FormatUint(getMemory(0), 10) + "," + strconv.FormatUint(getMemory(1), 10) + "," + strconv.FormatUint(getMemory(2), 10) + "," + strconv.FormatUint(getMemory(3), 10) + "," + strconv.FormatUint(getNetwork(0), 10) + "," + strconv.FormatUint(getNetwork(1), 10) + "," + "'" + getUptime() + "'" + "," + "CURRENT_TIMESTAMP" + ");")
 			if err != nil {
 				log.Fatal(err)
 			}
@@ -142,6 +143,28 @@ func getUptime() string {
 	output := fmt.Sprintf("%s", out)
 	output = strings.TrimSuffix(output, "\n")
 	return output
+}
+
+func getNetwork(i int) (uint64){
+	before, err := network.Get()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "%s\n", err)
+		return 0
+	}
+	time.Sleep(time.Duration(1) * time.Second)
+	after, err := network.Get()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "%s\n", err)
+		return 0
+	}
+	if i == 0 {
+		return after[0].RxBytes - before[0].RxBytes
+	}
+	if i == 1 {
+		return after[0].TxBytes - before[0].TxBytes
+	}
+
+	return 0
 }
 
 func DBSource() string {
