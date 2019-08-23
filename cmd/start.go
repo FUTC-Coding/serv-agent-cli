@@ -19,16 +19,17 @@ import (
 	"bufio"
 	"database/sql"
 	"fmt"
-	"github.com/mackerelio/go-osstat/cpu"
-	"github.com/mackerelio/go-osstat/memory"
+	_ "github.com/go-sql-driver/mysql"
 	"github.com/mackerelio/go-osstat/network"
+	cpu2 "github.com/shirou/gopsutil/cpu"
+	"github.com/shirou/gopsutil/disk"
+	"github.com/shirou/gopsutil/mem"
 	"log"
 	"os"
 	"os/exec"
 	"strconv"
 	"strings"
 	"time"
-	_ "github.com/go-sql-driver/mysql"
 
 	"github.com/spf13/cobra"
 )
@@ -59,7 +60,9 @@ to quickly create a Cobra application.`,
 		}
 
 		//try to create table with for the host. If table already exists, continue.
-		stmt, err := db.Prepare("CREATE TABLE " + Hostname() + "(CpuUser float, CpuSystem float, CpuIdle float, MemTotal int(11), MemUsed int(11), MemCached int(11), MemFree int(11), RxBytes int(11), TxBytes int(11), Uptime text, Time datetime);")
+		stmt, err := db.Prepare("CREATE TABLE " + Hostname() + "(CpuPerc float, MemTotal int(11), " +
+			"MemUsed int(11), MemCached int(11), MemFree int(11), RxBytes int(11), TxBytes int(11), " +
+			"DiskUsed int(11), DiskFree int(11), DiskRead int(11), DiskWrite int(11), Uptime text, Time datetime);")
 		if err != nil {
 			log.Fatal(err)
 		}
@@ -76,7 +79,19 @@ to quickly create a Cobra application.`,
 
 		//constantly send metrics to DB
 		for true {
-			stmt, err := db.Prepare("INSERT INTO " + Hostname() + " VALUES (" + strconv.FormatFloat(getCpu(0), 'f', 6, 64) + "," + strconv.FormatFloat(getCpu(1), 'f', 6, 64) + "," + strconv.FormatFloat(getCpu(2), 'f', 6, 64) + "," + strconv.FormatUint(getMemory(0), 10) + "," + strconv.FormatUint(getMemory(1), 10) + "," + strconv.FormatUint(getMemory(2), 10) + "," + strconv.FormatUint(getMemory(3), 10) + "," + strconv.FormatUint(getNetwork(0), 10) + "," + strconv.FormatUint(getNetwork(1), 10) + "," + "'" + getUptime() + "'" + "," + "CURRENT_TIMESTAMP" + ");")
+			stmt, err := db.Prepare("INSERT INTO " + Hostname() + " VALUES (" +
+				strconv.FormatFloat(getCpu(), 'f', 6, 64) + "," +
+				strconv.FormatUint(getMemory(0), 10) + "," +
+				strconv.FormatUint(getMemory(1), 10) + "," +
+				strconv.FormatUint(getMemory(2), 10) + "," +
+				strconv.FormatUint(getMemory(3), 10) + "," +
+				strconv.FormatUint(getNetwork(0), 10) + "," +
+				strconv.FormatUint(getNetwork(1), 10) + "," +
+				strconv.FormatUint(getDisk(0), 10) + "," +
+				strconv.FormatUint(getDisk(1), 10) + "," +
+				strconv.FormatUint(getDiskIO(0), 10) + "," +
+				strconv.FormatUint(getDiskIO(1), 10) + "," +
+				"'" + getUptime() + "'" + "," + "CURRENT_TIMESTAMP" + ");")
 			if err != nil {
 				log.Fatal(err)
 			}
@@ -94,44 +109,26 @@ to quickly create a Cobra application.`,
 }
 
 func getMemory(i int) uint64 {
-	mem, err := memory.Get()
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "%s\n", err)
-		return 0
+	v, e := mem.VirtualMemory()
+	if e != nil {
+		log.Fatal("couldn't get Memory stats")
 	}
+
 	if i == 0 {
-		return mem.Total / 1024 / 1024
+		return v.Total / 1024 / 1024
 	} else if i == 1 {
-		return mem.Used / 1024 / 1024
+		return v.Used / 1024 / 1024
 	} else if i == 2 {
-		return mem.Cached / 1024 / 1024
+		return v.Cached / 1024 / 1024
 	} else if i == 3 {
-		return mem.Free / 1024 / 1024
+		return v.Free / 1024 / 1024
 	}
 	return 0
 }
 
-func getCpu(i int) float64 {
-	before, err := cpu.Get()
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "%s\n", err)
-		return 0
-	}
-	time.Sleep(time.Duration(1) * time.Second)
-	after, err := cpu.Get()
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "%s\n", err)
-		return 0
-	}
-	total := float64(after.Total - before.Total)
-	if i == 0 {
-		return float64(after.User-before.User) / total * 100
-	} else if i == 1 {
-		return float64(after.System-before.System) / total * 100
-	} else if i == 2 {
-		return float64(after.Idle-before.Idle) / total * 100
-	}
-	return 0
+func getCpu() float64 {
+	c,_ := cpu2.Percent(time.Second * 1, false)
+	return c[0]
 }
 
 func getUptime() string {
@@ -197,6 +194,31 @@ func DBSource() string {
 	output := user + ":" + pass + "@tcp(" + ip + ")/stats"
 
 	return output
+}
+
+func getDisk(i int) uint64 {
+	d,e := disk.Usage("/")
+	if e != nil {
+		log.Fatal("couldn't get Disk Info")
+	}
+	if i == 0 {
+		return d.Used/1024/1024
+	}
+	if i == 1 {
+		return d.Free/1024/1024
+	}
+	return 0
+}
+
+func getDiskIO(i int) uint64 {
+	d := disk.IOCountersStat{}
+	if i == 0 {
+		return d.ReadBytes
+	}
+	if i == 1 {
+		return d.WriteBytes
+	}
+	return 0
 }
 
 func init() {
